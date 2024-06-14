@@ -1,3 +1,5 @@
+import neat.config
+import neat.stagnation
 import pygame
 import os
 import neat
@@ -32,7 +34,8 @@ class Bird:
         self.gravity =3
 
     def jump(self):
-        self.vel = -10.5 # -ve number to up and +ve number to go down
+        self.vel = -10
+        # self.vel = -10.5 # -ve number to up and +ve number to go down
         self.tick_count =0 # because we ahve just jumped so 0
         self.height = self.y
 
@@ -86,7 +89,8 @@ class Bird:
     
 
 class Pipe:
-    GAP = 200 # can be made random using randrange
+    GAP = random.randint(150, 250)
+    # GAP = 200 # can be made random using randrange
     VEL = 5 # velocity can be changed to make it more difficult or easy depending on the requirement
 
     def __init__(self,x) -> None:
@@ -155,23 +159,34 @@ class Base:
         win.blit(self.IMG, (self.x1, self.y))
         win.blit(self.IMG, (self.x2, self.y))
 
-def draw_window(win, bird, pipes, base, score):    
+def draw_window(win, birds, pipes, base, score):    
     win.blit(BG_IMG, (0,0)) # blit is for draw here
 
     for pipe in pipes:
         pipe.draw(win)
 
     base.draw(win) # base would be over the pipes which are not properly there kind of, so auto matic cropping would occur
-    
-    bird.draw(win) # bird would be on the top
+    for bird in birds:
+        bird.draw(win) # bird would be on the top
     text = STAT_FONT.render(f"Score: {score}", 1, (255,255,255))
     win.blit(text, (WIN_WIDTH - 10 - text.get_width(), 10))
     pygame.display.update()
 
-def main():
-    bird = Bird(230,350)
+def main(genomes, config):
+    # bird = Bird(230,350)
+    nets =[] # neural networks
+    ge = [] # curr genomes
+    birds = [] # ge birds would have the same index to store the values
+
+    for _ ,g in genomes: # genome is a tuple that has id and object
+        net = neat.nn.FeedForwardNetwork.create(g, config)
+        nets.append(net)
+        birds.append(Bird(230, 350))
+        g.fitness = 0 # initial fitness is 0
+        ge.append(g)
+
     base = Base(730) # these numbers are just calculated
-    pipes = [Pipe(700)]
+    pipes = [Pipe(600)]
     win = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
     clock = pygame.time.Clock() # read about it
     run = True
@@ -184,34 +199,82 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 run = False
+                pygame.quit()
+                quit()
+        # this tell first look at the first pipe and if that pipe has been passed then look at the second pipe in the list
+        pipe_ind = 0
+        if len(birds) > 0:
+            if len(pipes) > 1 and birds[0].x > pipes[0].x + pipes[0].PIPE_TOP.get_width():
+                pipe_ind = 1
+        else:# if no birds left
+            run = False
+            break
+        
+        for x, bird in enumerate(birds):
+            bird.move()
+            ge[x].fitness += 0.1 # per frame for 30*0.1 = 3 fitness points per second
+        
+            output = nets[x].activate((bird.y, abs(bird.y - pipes[pipe_ind].height), abs(bird.y - pipes[pipe_ind].bottom))) # activate using output
+            if output[0] > 0.5:
+                bird.jump()
+
         # bird.move()
         rem = [] # auto delete
         for pipe in pipes:
-            if pipe.collide(bird= bird):
-                pass
-                # run = False
+            for x,bird in enumerate(birds): # enumerate gives numbers to a list
+                if pipe.collide(bird= bird): # remove birds which collide
+                    # pass
+                    # run = False
+                    ge[x].fitness -=1 # reduce fitness by 1 and encourage going through the gap, this would be helpful in dealing with the last bird alive
+                    birds.pop(x)
+                    nets.pop(x)
+                    ge.pop(x)
 
+
+                if not pipe.passed and pipe.x < bird.x:
+                    pipe.passed = True
+                    add_pipe = True
+            
             if pipe.x + pipe.PIPE_TOP.get_width() < 0: # this means that the pipe is completely off the screen
                 rem.append(pipe)
 
-            if not pipe.passed and pipe.x < bird.x:
-                pipe.passed = True
-                add_pipe = True
-            
             pipe.move()
         if add_pipe:
             score += 1
-            pipes.append(Pipe(700))
+            for g in ge:
+                g.fitness +=5 # any genome in this list is alive otherwise we would have already removed it when it collided
+
+            pipes.append(Pipe(600)) # larger value would make it wider and smaller value to make the distance between pipes lesser
             # add_pipe = False
         for r in rem:
             pipes.remove(r)
         
-        if bird.y + bird.img.get_height() >= 730:
-            pass
+        for x,bird in enumerate(birds):
+            if bird.y + bird.img.get_height() >= 730 or bird.y < 0: # below the screen or aboe the screen
+                birds.pop(x) # not the best practice
+                nets.pop(x)
+                ge.pop(x)
 
         base.move()
-        draw_window(win, bird, pipes, base, score)
-    pygame.quit()
-    quit()
+        draw_window(win, birds, pipes, base, score)
+    
 
-main()
+# main() # run is already calling this now so no need of this thing
+
+# NEAT is basically like evolution in the natural world kind of obeying Darwin's Survival of the fittest
+
+def run(config_path):
+    # put in the subheadings of the config file which were written in []
+    config = neat.config.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation, config_path)
+    p = neat.Population(config)
+
+    p.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    p.add_reporter(stats)
+    num_of_generations = 50 # call the main function num_of_gen times in the next lines
+    winner = p.run(main , num_of_generations)
+
+if __name__ == "__main__":
+    local_dir = os.path.dirname(__file__)
+    config_path = os.path.join(local_dir, "FlappyNeatConfig.txt")
+    run(config_path)
